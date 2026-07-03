@@ -112,9 +112,13 @@ function preprocessVariants(dataUrl) {
       const variants = [];
       const configs = [
         { name: 'photo', crop: null, maxW: 1800, mode: 'plain' },
+        { name: 'zone VIN ciblee', crop: { x: 0.16, y: 0.38, w: 0.72, h: 0.18 }, maxW: 2200, mode: 'contrast' },
+        { name: 'zone VIN basse', crop: { x: 0.14, y: 0.42, w: 0.74, h: 0.18 }, maxW: 2200, mode: 'contrast' },
+        { name: 'zone VIN large', crop: { x: 0.08, y: 0.28, w: 0.84, h: 0.34 }, maxW: 2200, mode: 'contrast' },
         { name: 'contraste', crop: null, maxW: 1800, mode: 'contrast' },
-        { name: 'bande VIN', crop: { x: 0.03, y: 0.22, w: 0.94, h: 0.46 }, maxW: 2200, mode: 'contrast' },
-        { name: 'bande VIN noir/blanc', crop: { x: 0.03, y: 0.22, w: 0.94, h: 0.46 }, maxW: 2200, mode: 'threshold' }
+        { name: 'zone VIN noir/blanc', crop: { x: 0.16, y: 0.38, w: 0.72, h: 0.18 }, maxW: 2200, mode: 'threshold' },
+        { name: 'zone VIN +2', crop: { x: 0.16, y: 0.38, w: 0.72, h: 0.18 }, maxW: 2200, mode: 'contrast', rotation: 2 },
+        { name: 'zone VIN -2', crop: { x: 0.16, y: 0.38, w: 0.72, h: 0.18 }, maxW: 2200, mode: 'contrast', rotation: -2 }
       ];
 
       for (const cfg of configs) {
@@ -131,6 +135,7 @@ function preprocessVariants(dataUrl) {
         ctx.imageSmoothingEnabled = true;
         ctx.imageSmoothingQuality = 'high';
         ctx.drawImage(img, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
+        if (cfg.rotation) rotateCanvasInPlace(ctx, canvas, cfg.rotation);
 
         if (cfg.mode !== 'plain') enhanceOcrCanvas(ctx, canvas, cfg.mode);
         variants.push({ name: cfg.name, dataUrl: canvas.toDataURL('image/png') });
@@ -163,8 +168,78 @@ function enhanceOcrCanvas(ctx, canvas, mode) {
 // Clé OCR.Space : clé de démo publique par défaut (limitée). Pour un usage
 // réel, obtenez une clé gratuite (25 000 requêtes/mois) sur ocr.space et
 // exécutez dans la console : localStorage.setItem('attt_ocr_key', 'VOTRE_CLE')
+function rotateCanvasInPlace(ctx, canvas, degrees) {
+  const tmp = document.createElement('canvas');
+  tmp.width = canvas.width;
+  tmp.height = canvas.height;
+  tmp.getContext('2d').drawImage(canvas, 0, 0);
+  ctx.save();
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.translate(canvas.width / 2, canvas.height / 2);
+  ctx.rotate((degrees * Math.PI) / 180);
+  ctx.drawImage(tmp, -tmp.width / 2, -tmp.height / 2);
+  ctx.restore();
+}
+
 const OCR_SPACE_URL = 'https://api.ocr.space/parse/image';
+const GEMINI_OCR_API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models/';
+const GEMINI_OCR_DEFAULT_MODEL = 'gemini-2.5-flash';
 function ocrSpaceKey() { return (localStorage.getItem('attt_ocr_key') || 'helloworld').trim(); }
+function geminiOcrKeys() {
+  const raw = localStorage.getItem('attt_gemini_keys') || localStorage.getItem('attt_gemini_key') || '';
+  return raw.split(/[\s,;]+/).map((key) => key.trim()).filter((key) => key.length > 10);
+}
+function geminiOcrModel() {
+  return (localStorage.getItem('attt_gemini_model') || GEMINI_OCR_DEFAULT_MODEL).trim() || GEMINI_OCR_DEFAULT_MODEL;
+}
+
+function imagePartFromDataUrl(dataUrl) {
+  const m = String(dataUrl || '').match(/^data:([^;]+);base64,(.+)$/);
+  return m ? { mimeType: m[1], data: m[2] } : null;
+}
+
+function extractGeminiOcrText(json) {
+  const parts = json?.candidates?.[0]?.content?.parts;
+  if (!Array.isArray(parts)) return '';
+  return parts.map((part) => part?.text || '').filter(Boolean).join('\n');
+}
+
+async function ocrGeminiText(dataUrl, apiKey, model) {
+  const image = imagePartFromDataUrl(dataUrl);
+  if (!image) return '';
+  const endpoint = GEMINI_OCR_API_BASE + encodeURIComponent(model.replace(/^models\//i, '')) + ':generateContent?key=' + encodeURIComponent(apiKey);
+  const body = JSON.stringify({
+    contents: [{
+      parts: [
+        { inline_data: { mime_type: image.mimeType, data: image.data } },
+        {
+          text: [
+            'Lis le numéro VIN / numéro de châssis visible sur cette image.',
+            'Retourne uniquement un JSON compact comme {"vin":"17CARACTERES","confidence":0-100}.',
+            'VIN valide: exactement 17 caractères, lettres A-HJ-NPR-Z et chiffres 0-9, jamais I/O/Q.',
+            'Si tu n es pas sûr, retourne {"vin":"","confidence":0}.'
+          ].join(' ')
+        }
+      ]
+    }],
+    generationConfig: { temperature: 0, maxOutputTokens: 96, responseMimeType: 'application/json' }
+  });
+  const ctrl = new AbortController();
+  const to = setTimeout(() => ctrl.abort(), 30000);
+  try {
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body,
+      signal: ctrl.signal
+    });
+    if (!res.ok) throw new Error('Gemini HTTP ' + res.status);
+    return extractGeminiOcrText(await res.json());
+  } finally {
+    clearTimeout(to);
+  }
+}
 
 async function getWorker() {
   if (ocrWorker) return ocrWorker;
@@ -268,7 +343,11 @@ function chooseOcrVin(reads) {
 function isStrongOcrChoice(choice) {
   if (!choice || !choice.vin) return false;
   const info = getInfoCheckDigitModele(choice.vin);
-  return choice.score >= 1800 || (info.respecte === true && calcCheckDigit(choice.vin) === choice.vin[8]);
+  const checkMatches = calcCheckDigit(choice.vin) === choice.vin[8];
+  if (String(choice.moteur || '').startsWith('Tesseract')) {
+    return choice.score >= 2200 && info.respecte === true && checkMatches;
+  }
+  return choice.score >= 1800 || (info.respecte === true && checkMatches);
 }
 
 async function processImage(dataUrl) {
@@ -278,8 +357,29 @@ async function processImage(dataUrl) {
     const reads = [];
     let choice = null;
 
-    // 1) OCR.Space (API gratuite) si connexion disponible
+    // 1) Gemini OCR visuel, uniquement si une clé API est configurée localement
     if (navigator.onLine) {
+      const geminiKeys = geminiOcrKeys();
+      if (geminiKeys.length) {
+        const geminiVariants = variants.slice(0, 6);
+        const model = geminiOcrModel();
+        for (const variant of geminiVariants) {
+          for (const key of geminiKeys) {
+            try {
+              const text = await ocrGeminiText(variant.dataUrl, key, model);
+              if (text) reads.push({ source: 'Gemini', variant: variant.name, text });
+              choice = chooseOcrVin(reads);
+              if (isStrongOcrChoice(choice)) break;
+            } catch (e) { console.warn('[Gemini]', variant.name, e.message); }
+          }
+          if (isStrongOcrChoice(choice)) break;
+        }
+      }
+    }
+
+    // 2) OCR.Space (API gratuite) si connexion disponible
+    choice = chooseOcrVin(reads);
+    if (navigator.onLine && !isStrongOcrChoice(choice)) {
       const hasPersonalKey = ocrSpaceKey().toLowerCase() !== 'helloworld';
       const apiVariants = variants.slice(0, hasPersonalKey ? variants.length : 2);
       const apiEngines = hasPersonalKey ? ['2', '1'] : ['2'];
@@ -296,10 +396,10 @@ async function processImage(dataUrl) {
       }
     }
 
-    // 2) Repli Tesseract (local) si OCR.Space échoue ou VIN incomplet (< 17)
+    // 3) Repli Tesseract (local) si les APIs échouent ou VIN incomplet (< 17)
     choice = chooseOcrVin(reads);
     if (!isStrongOcrChoice(choice)) {
-      const tessVariants = variants.slice(1, 4);
+      const tessVariants = variants.slice(1);
       for (const variant of tessVariants) {
         try {
           const mode = variant.name.includes('bande') ? '7' : '6';
@@ -311,9 +411,11 @@ async function processImage(dataUrl) {
       }
     }
 
-    // 3) Choix final : jamais de VIN inventé, seulement 17 caractères lus.
+    // 4) Choix final : jamais de VIN inventé, seulement 17 caractères lus.
     choice = chooseOcrVin(reads);
-    const vin = choice && choice.vin ? choice.vin : '';
+    const localExactUntrusted = choice && choice.vin && String(choice.moteur || '').startsWith('Tesseract') && !isStrongOcrChoice(choice);
+    const localShortPartial = choice && choice.partial && String(choice.moteur || '').startsWith('Tesseract') && choice.partial.length < 14;
+    const vin = choice && choice.vin && !localExactUntrusted ? choice.vin : '';
     const moteur = choice && choice.moteur ? choice.moteur : 'OCR';
 
     hideLoader();
@@ -322,11 +424,17 @@ async function processImage(dataUrl) {
       let msg = '✓ VIN détecté (' + (moteur || 'OCR') + ')';
       setFeedback('<span class="msg-ok">' + msg + ' — vérifiez puis enregistrez.</span>');
       analyzeVin();
-    } else if (choice && choice.partial) {
+    } else if (choice && choice.partial && !localShortPartial) {
       $('vinField').value = choice.partial;
       $('resultBlock').style.display = 'none';
       $('btnSend').disabled = true;
       setFeedback('<span class="msg-missing">VIN incomplet détecté (' + choice.partial.length + '/17) : ' + escapeHtml(choice.partial) + '. Reprenez une photo plus proche ou saisissez le caractère manquant.</span>');
+    } else if (localExactUntrusted || localShortPartial) {
+      $('vinField').value = '';
+      $('resultBlock').style.display = 'none';
+      $('btnSend').disabled = true;
+      const uncertain = localExactUntrusted ? choice.vin : choice.partial;
+      setFeedback('<span class="msg-missing">OCR local incertain : ' + escapeHtml(uncertain) + '. Reprenez une photo plus nette ou saisissez le VIN manuellement.</span>');
     } else {
       $('resultBlock').style.display = 'none';
       $('btnSend').disabled = true;
