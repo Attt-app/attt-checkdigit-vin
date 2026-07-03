@@ -1,5 +1,5 @@
 /* Service worker — cache applicatif (mode hors-ligne) */
-const CACHE = 'attt-checkdigit-v7';
+const CACHE = 'attt-checkdigit-v8';
 const ASSETS = [
   './',
   './index.html',

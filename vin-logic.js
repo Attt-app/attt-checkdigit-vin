@@ -51,6 +51,15 @@ const WMI_CHECK_DIGIT_REGIONS = {
   '5':{ respecte:true,  region:'Amérique du Nord (USA)',    norme:'FMVSS 115' }
 };
 
+// Surcharges manuelles (retour terrain ATTT) : WMI qui respectent le check-digit
+// même si la base NHTSA les marque "non" (constructeurs qui l'appliquent malgré
+// l'absence d'obligation, ex. BMW). true = respecte, false = ne respecte pas.
+const WMI_CHECK_DIGIT_OVERRIDE = {
+  WBA: true,  // BMW
+  WBS: true,  // BMW M
+  WBY: true   // BMW i
+};
+
 // ── Base WMI (chargée depuis wmi-reference.js : [WMI, Marque, "oui"/"non"]) ──
 const WMI_REFERENCE_ROWS = Array.isArray(window.WMI_REFERENCE_ROWS) ? window.WMI_REFERENCE_ROWS : [];
 const WMI_REFERENCE_MAP = (() => {
@@ -110,18 +119,25 @@ function getWmiReference(wmiOrVin) {
 function getInfoCheckDigitModele(vin) {
   const normalized = String(vin || '').toUpperCase();
   const regionInfo = WMI_CHECK_DIGIT_REGIONS[normalized[0]] || null;
+  const region = regionInfo ? regionInfo.region : (WMI_PAYS_2[normalized.substring(0, 2)] || WMI_PAYS[normalized[0]] || 'Région inconnue');
   const wmiRef = getWmiReference(normalized);
+  const wmiCode = wmiRef ? wmiRef.wmi : normalized.substring(0, 3);
+  const override = WMI_CHECK_DIGIT_OVERRIDE[wmiCode];
   if (wmiRef) {
+    const respecte = (override !== undefined) ? override : wmiRef.checkDigit;
     return {
-      respecte: wmiRef.checkDigit,
-      region: regionInfo ? regionInfo.region : (WMI_PAYS_2[normalized.substring(0, 2)] || WMI_PAYS[normalized[0]] || 'Région inconnue'),
-      norme: wmiRef.checkDigit ? 'FMVSS 115' : 'ISO 3779 (check-digit optionnel)',
+      respecte,
+      region,
+      norme: respecte ? (regionInfo ? 'FMVSS 115' : 'Check-digit constructeur') : 'ISO 3779 (check-digit optionnel)',
       wmi: wmiRef.wmi,
       marque: wmiRef.marque
     };
   }
-  if (regionInfo) return Object.assign({ wmi: normalized.substring(0, 3), marque: '' }, regionInfo);
-  return { respecte: false, region: 'Région inconnue / WMI non référencé', norme: 'ISO 3779', wmi: normalized.substring(0, 3), marque: '' };
+  if (override !== undefined) {
+    return { respecte: override, region, norme: override ? 'Check-digit constructeur' : 'ISO 3779 (check-digit optionnel)', wmi: wmiCode, marque: '' };
+  }
+  if (regionInfo) return Object.assign({ wmi: wmiCode, marque: '' }, regionInfo);
+  return { respecte: false, region: 'Région inconnue / WMI non référencé', norme: 'ISO 3779', wmi: wmiCode, marque: '' };
 }
 
 // true / false / null selon que le WMI respecte (ou non) le check-digit
