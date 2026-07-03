@@ -30,6 +30,33 @@ body {
   margin: 0 auto;
   padding: 0 14px 40px;
 }
+body.list-mode .app { max-width: 980px; }
+
+.page-view { display: none; }
+.page-view.active { display: block; }
+
+.top-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin: 0 0 14px;
+}
+.tab-btn {
+  min-height: 42px;
+  background: var(--panel2);
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  font-family: var(--font-display);
+  font-size: 0.82rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+.tab-btn.active {
+  color: #fff;
+  border-color: rgba(77, 143, 230, 0.65);
+  background: linear-gradient(135deg, rgba(0, 85, 204, 0.9), rgba(0, 119, 255, 0.78));
+}
 
 /* Header */
 .header {
@@ -272,3 +299,128 @@ body {
 .hist-ko { background: rgba(224, 48, 80, 0.15); color: var(--red); }
 .hist-na { background: rgba(232, 160, 32, 0.15); color: var(--amber); }
 .hist-sent { font-size: 0.66rem; color: var(--text-dim); }
+
+/* Liste WMI */
+.wmi-card { padding: 14px; }
+.wmi-title-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.wmi-title-row h2 { margin-bottom: 0; }
+.wmi-stats {
+  color: var(--text-dim);
+  font-size: 0.72rem;
+  line-height: 1.4;
+  text-align: right;
+}
+.wmi-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 160px;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.wmi-search,
+.wmi-filter {
+  width: 100%;
+  min-height: 42px;
+  background: var(--panel2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--text);
+  font-size: 0.85rem;
+  outline: none;
+}
+.wmi-search { padding: 0 12px; }
+.wmi-filter { padding: 0 10px; }
+.wmi-search:focus,
+.wmi-filter:focus { border-color: var(--blue-light); }
+.wmi-table-wrap {
+  max-height: 62vh;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.18);
+}
+.wmi-table {
+  width: 100%;
+  min-width: 720px;
+  border-collapse: collapse;
+  font-size: 0.8rem;
+}
+.wmi-table thead {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--panel2);
+}
+.wmi-table th,
+.wmi-table td {
+  padding: 9px 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  text-align: left;
+  vertical-align: middle;
+}
+.wmi-table th {
+  color: var(--gold);
+  font-family: var(--font-display);
+  font-size: 0.72rem;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+.wmi-code {
+  color: var(--blue-light);
+  font-family: "Courier New", monospace;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+}
+.wmi-brand { color: #fff; }
+.wmi-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 46px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  font-family: var(--font-display);
+  font-size: 0.7rem;
+  font-weight: 700;
+}
+.wmi-chip.yes { color: var(--green); background: rgba(0, 200, 122, 0.12); }
+.wmi-chip.no { color: var(--amber); background: rgba(232, 160, 32, 0.12); }
+.wmi-status { font-weight: 700; font-size: 0.76rem; }
+.wmi-status.yes { color: var(--green); }
+.wmi-status.no { color: var(--amber); }
+.wmi-empty {
+  color: var(--text-dim);
+  text-align: center;
+  padding: 18px 10px;
+}
+.wmi-pager {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+}
+.wmi-pager .btn {
+  min-width: 106px;
+  padding: 10px 12px;
+  font-size: 0.78rem;
+}
+.wmi-page-info {
+  color: var(--text-dim);
+  font-size: 0.78rem;
+  text-align: center;
+}
+
+@media (max-width: 640px) {
+  body.list-mode .app { max-width: 520px; }
+  .wmi-title-row { display: block; }
+  .wmi-stats { display: block; text-align: left; margin-top: 6px; }
+  .wmi-controls { grid-template-columns: 1fr; }
+  .wmi-pager { grid-template-columns: 1fr 1fr; }
+  .wmi-page-info { grid-column: 1 / -1; grid-row: 1; }
+}

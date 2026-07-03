@@ -9,6 +9,10 @@ let stream = null;
 const photos = [];          // dataURL des photos capturées (max 3)
 let ocrWorker = null;
 let lastResult = null;      // { vin, decode, info, verdict }
+let activePage = 'scan';
+let wmiPage = 1;
+let wmiRowsCache = null;
+const WMI_PAGE_SIZE = 150;
 
 // ── Helpers UI ───────────────────────────────────────────────────────
 function showLoader(txt) { $('loaderText').textContent = txt || 'Traitement…'; $('loader').classList.add('open'); }
@@ -19,6 +23,12 @@ function toast(msg, type = '') {
   t.textContent = msg;
   t.className = 'toast show ' + type;
   setTimeout(() => { t.className = 'toast ' + type; }, 2800);
+}
+
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, (ch) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }[ch]));
 }
 
 // ── Caméra ───────────────────────────────────────────────────────────
@@ -312,6 +322,98 @@ function renderHistory() {
   }).join('');
 }
 
+// ── Page Liste WMI ─────────────────────────────────────────────
+function switchPage(page) {
+  activePage = page === 'list' ? 'list' : 'scan';
+  $('scanPage').classList.toggle('active', activePage === 'scan');
+  $('listPage').classList.toggle('active', activePage === 'list');
+  $('tabScan').classList.toggle('active', activePage === 'scan');
+  $('tabList').classList.toggle('active', activePage === 'list');
+  document.body.classList.toggle('list-mode', activePage === 'list');
+  if (activePage === 'list') {
+    stopCamera();
+    renderWmiList();
+  }
+}
+
+function getWmiRows() {
+  if (wmiRowsCache) return wmiRowsCache;
+  const rows = Array.isArray(window.WMI_REFERENCE_ROWS) ? window.WMI_REFERENCE_ROWS : [];
+  wmiRowsCache = rows.map((row) => ({
+    wmi: String(row?.[0] || '').toUpperCase().trim(),
+    marque: String(row?.[1] || '').trim(),
+    checkDigit: String(row?.[2] || '').toLowerCase() === 'oui' ? 'oui' : 'non'
+  })).filter((row) => row.wmi).sort((a, b) => a.wmi.localeCompare(b.wmi));
+  return wmiRowsCache;
+}
+
+function getFilteredWmiRows() {
+  const needle = String($('wmiSearch')?.value || '').toLowerCase().trim();
+  const mode = $('wmiFilter')?.value || 'all';
+  return getWmiRows().filter((row) => {
+    if (mode !== 'all' && row.checkDigit !== mode) return false;
+    if (!needle) return true;
+    const status = row.checkDigit === 'oui' ? 'check-digit applicable' : 'check-digit non applicable';
+    return row.wmi.toLowerCase().includes(needle)
+      || row.marque.toLowerCase().includes(needle)
+      || row.checkDigit.includes(needle)
+      || status.includes(needle);
+  });
+}
+
+function renderWmiStats(rows, totalRows) {
+  const stats = $('wmiStats');
+  if (!stats) return;
+  const fmt = new Intl.NumberFormat('fr-FR');
+  const oui = rows.filter((row) => row.checkDigit === 'oui').length;
+  const non = rows.length - oui;
+  const prefix = rows.length === totalRows.length ? '' : fmt.format(rows.length) + ' / ';
+  stats.textContent = `${prefix}${fmt.format(totalRows.length)} WMI · oui ${fmt.format(oui)} · non ${fmt.format(non)}`;
+}
+
+function renderWmiList(resetPage = false) {
+  const body = $('wmiTableBody');
+  if (!body) return;
+  if (resetPage) wmiPage = 1;
+  const allRows = getWmiRows();
+  const rows = getFilteredWmiRows();
+  const maxPage = Math.max(1, Math.ceil(rows.length / WMI_PAGE_SIZE));
+  wmiPage = Math.min(Math.max(1, wmiPage), maxPage);
+  renderWmiStats(rows, allRows);
+
+  if (!rows.length) {
+    body.innerHTML = '<tr><td class="wmi-empty" colspan="4">Aucun WMI trouvé.</td></tr>';
+  } else {
+    const start = (wmiPage - 1) * WMI_PAGE_SIZE;
+    const visible = rows.slice(start, start + WMI_PAGE_SIZE);
+    body.innerHTML = visible.map((row) => {
+      const applicable = row.checkDigit === 'oui';
+      const status = applicable ? 'CHECK-DIGIT APPLICABLE' : 'CHECK-DIGIT NON APPLICABLE';
+      return `<tr>
+        <td class="wmi-code">${escapeHtml(row.wmi)}</td>
+        <td class="wmi-brand">${escapeHtml(row.marque || '—')}</td>
+        <td><span class="wmi-chip ${applicable ? 'yes' : 'no'}">${row.checkDigit}</span></td>
+        <td class="wmi-status ${applicable ? 'yes' : 'no'}">${status}</td>
+      </tr>`;
+    }).join('');
+  }
+
+  const first = rows.length ? ((wmiPage - 1) * WMI_PAGE_SIZE) + 1 : 0;
+  const last = Math.min(wmiPage * WMI_PAGE_SIZE, rows.length);
+  const fmt = new Intl.NumberFormat('fr-FR');
+  $('wmiPageInfo').textContent = rows.length
+    ? `${fmt.format(first)}-${fmt.format(last)} sur ${fmt.format(rows.length)}`
+    : '0 sur 0';
+  $('wmiPrev').disabled = wmiPage <= 1;
+  $('wmiNext').disabled = wmiPage >= maxPage;
+}
+
+function changeWmiPage(direction) {
+  wmiPage += direction;
+  renderWmiList();
+  $('wmiTableBody')?.closest('.wmi-table-wrap')?.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
 // ── Enregistrer (historique local uniquement, aucun envoi) ────────────
 // Le bouton « Enregistrer » ne fait qu'un enregistrement local. Aucune
 // donnée n'est transmise à un tiers : le libellé correspond exactement à
@@ -360,8 +462,15 @@ window.addEventListener('DOMContentLoaded', () => {
   $('btnReset').addEventListener('click', resetAll);
   $('btnSend').addEventListener('click', saveRecord);
   $('btnClearHistory').addEventListener('click', clearHistory);
+  $('tabScan').addEventListener('click', () => switchPage('scan'));
+  $('tabList').addEventListener('click', () => switchPage('list'));
+  $('wmiSearch').addEventListener('input', () => renderWmiList(true));
+  $('wmiFilter').addEventListener('change', () => renderWmiList(true));
+  $('wmiPrev').addEventListener('click', () => changeWmiPage(-1));
+  $('wmiNext').addEventListener('click', () => changeWmiPage(1));
 
   renderHistory();
+  renderWmiList(true);
 
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('./sw.js').catch(() => {});

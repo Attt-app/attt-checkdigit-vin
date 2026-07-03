@@ -20,6 +20,13 @@
       </div>
     </header>
 
+    <nav class="top-tabs" aria-label="Navigation principale">
+      <button id="tabScan" class="tab-btn active" type="button">Scanner</button>
+      <button id="tabList" class="tab-btn" type="button">Liste WMI</button>
+    </nav>
+
+    <main id="scanPage" class="page-view active">
+
     <div class="privacy-banner">
       🔒 <b>Confidentialité :</b> la lecture du VIN se fait entièrement sur votre appareil.
     </div>
@@ -81,6 +88,44 @@
         <button id="btnClearHistory" class="btn btn-ghost">Vider l’historique</button>
       </div>
     </section>
+    </main>
+
+    <main id="listPage" class="page-view">
+      <section class="card wmi-card">
+        <div class="wmi-title-row">
+          <h2>Liste WMI mondiale</h2>
+          <span id="wmiStats" class="wmi-stats">Chargement...</span>
+        </div>
+        <div class="wmi-controls">
+          <input id="wmiSearch" class="wmi-search" type="search" placeholder="Rechercher WMI ou marque" autocomplete="off" />
+          <select id="wmiFilter" class="wmi-filter" aria-label="Filtrer par check-digit">
+            <option value="all">Tous</option>
+            <option value="oui">Check-digit oui</option>
+            <option value="non">Check-digit non</option>
+          </select>
+        </div>
+        <div class="wmi-table-wrap">
+          <table class="wmi-table">
+            <thead>
+              <tr>
+                <th>WMI</th>
+                <th>Marque</th>
+                <th>Check-digit</th>
+                <th>Statut</th>
+              </tr>
+            </thead>
+            <tbody id="wmiTableBody">
+              <tr><td colspan="4">Chargement...</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="wmi-pager">
+          <button id="wmiPrev" class="btn btn-ghost" type="button">Précédent</button>
+          <span id="wmiPageInfo" class="wmi-page-info"></span>
+          <button id="wmiNext" class="btn btn-ghost" type="button">Suivant</button>
+        </div>
+      </section>
+    </main>
 
     <p class="footer-note">ATTT · Agence Technique des Transports Terrestres — v1.0</p>
   </div>
