@@ -51,14 +51,12 @@ const WMI_CHECK_DIGIT_REGIONS = {
   '5':{ respecte:true,  region:'Amérique du Nord (USA)',    norme:'FMVSS 115' }
 };
 
-// Surcharges manuelles (retour terrain ATTT) : WMI qui respectent le check-digit
-// même si la base NHTSA les marque "non" (constructeurs qui l'appliquent malgré
-// l'absence d'obligation, ex. BMW). true = respecte, false = ne respecte pas.
-const WMI_CHECK_DIGIT_OVERRIDE = {
-  WBA: true,  // BMW
-  WBS: true,  // BMW M
-  WBY: true   // BMW i
-};
+// Surcharges manuelles : AUCUNE. La liste de référence (wmi-reference.js,
+// colonne oui/non générée depuis NHTSA vPIC) fait autorité pour déterminer
+// quels WMI appliquent le check-digit. Exemples : BMW Amérique du Nord
+// (3MW, 4US, 5UX…) = oui ; BMW Europe (WBA, WB1, WAP…) = non (optionnel,
+// ISO 3779). Pour ajouter une correction VÉRIFIÉE, mettre ici WMI: true/false.
+const WMI_CHECK_DIGIT_OVERRIDE = {};
 
 // ── Base WMI (chargée depuis wmi-reference.js : [WMI, Marque, "oui"/"non"]) ──
 const WMI_REFERENCE_ROWS = Array.isArray(window.WMI_REFERENCE_ROWS) ? window.WMI_REFERENCE_ROWS : [];
