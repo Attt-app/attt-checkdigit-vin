@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#0055cc" />
+  <title>ATTT · Check-Digit VIN</title>
+  <link rel="manifest" href="./manifest.json" />
+  <link rel="icon" href="./icons/icon-192.png" />
+  <link rel="apple-touch-icon" href="./icons/icon-192.png" />
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <div class="app">
+    <header class="header">
+      <img src="./assets/Logo.png" alt="Logo ATTT" />
+      <div class="header-text">
+        <h1>CHECK-DIGIT VIN</h1>
+        <p>ATTT · Vérification du numéro de châssis</p>
+      </div>
+    </header>
+
+    <div class="privacy-banner">
+      🔒 <b>Confidentialité :</b> la lecture du VIN se fait entièrement sur votre appareil.
+    </div>
+
+    <!-- Capture -->
+    <section class="card">
+      <h2>1 · Photo du châssis</h2>
+      <div id="camWrap">
+        <div id="camPlaceholder">Appuyez sur « Caméra » ou « Galerie »<br />pour photographier le numéro VIN</div>
+        <video id="video" playsinline muted></video>
+        <img id="preview" alt="Aperçu" />
+        <div id="scanFrame" class="scan-frame"></div>
+      </div>
+      <div class="btn-row">
+        <button id="btnCam" class="btn btn-primary">📷 Caméra</button>
+        <button id="btnCapture" class="btn btn-gold" disabled>Capturer</button>
+        <label class="btn btn-ghost" style="text-align:center;line-height:1.4">
+          🖼️ Galerie
+          <input id="galleryInput" type="file" accept="image/*" capture="environment" hidden />
+        </label>
+      </div>
+      <div id="thumbs" class="thumbs"></div>
+    </section>
+
+    <!-- VIN -->
+    <section class="card">
+      <h2>2 · Numéro VIN (17 caractères)</h2>
+      <div class="vin-input-row">
+        <input id="vinField" maxlength="17" spellcheck="false" autocomplete="off"
+               placeholder="WVWZZZ1JZXW000000" />
+      </div>
+      <div class="btn-row">
+        <button id="btnAnalyze" class="btn btn-primary">Analyser le check-digit</button>
+        <button id="btnReset" class="btn btn-ghost">Réinitialiser</button>
+      </div>
+      <div id="feedback" class="feedback"></div>
+    </section>
+
+    <!-- Résultat -->
+    <section id="resultBlock" class="card result-block">
+      <h2>3 · Résultat</h2>
+      <div id="checkBadge" class="check-badge"></div>
+      <div id="detailGrid" class="detail-grid"></div>
+      <div class="btn-row">
+        <button id="btnSend" class="btn btn-green" disabled>Enregistrer</button>
+      </div>
+      <p class="footer-note">
+        Le check-digit n’est calculé que pour les WMI qui le respectent (norme FMVSS 115).
+        Pour les autres régions (ISO 3779), le contrôle est indiqué comme « non applicable ».
+      </p>
+    </section>
+
+    <!-- Historique local -->
+    <section class="card">
+      <h2>Historique <span id="historyCount" class="hist-count"></span></h2>
+      <p id="historyEmpty" class="footer-note" style="text-align:left">Aucun enregistrement pour le moment. Les 50 derniers scans s’affichent ici.</p>
+      <div id="historyList" class="history-list"></div>
+      <div class="btn-row">
+        <button id="btnClearHistory" class="btn btn-ghost">Vider l’historique</button>
+      </div>
+    </section>
+
+    <p class="footer-note">ATTT · Agence Technique des Transports Terrestres — v1.0</p>
+  </div>
+
+  <!-- Loader -->
+  <div id="loader" class="loader">
+    <div class="spinner"></div>
+    <div id="loaderText" class="loader-text">Traitement…</div>
+  </div>
+
+  <!-- Toast -->
+  <div id="toast" class="toast"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+  <script src="./wmi-reference.js"></script>
+  <script src="./vin-logic.js"></script>
+  <script src="./app.js"></script>
+</body>
+</html>
