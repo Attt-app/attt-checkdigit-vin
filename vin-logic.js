@@ -180,42 +180,133 @@ function decodeAnneeModele(vin) {
   return recent || null;
 }
 
-// Extraction du VIN depuis un texte OCR brut
-function extraireVIN(text) {  const clean = String(text || '').toUpperCase()
-    .replace(/[^A-Z0-9]/g, ' ')
+// Extraction du VIN depuis un texte OCR brut. On travaille ligne par ligne pour
+// ne jamais fabriquer un faux VIN en concaténant le VIN avec les textes de l'UI.
+const VIN_ALLOWED_RE = /^[A-HJ-NPR-Z0-9]{17}$/;
+const VIN_PARTIAL_RE = /^[A-HJ-NPR-Z0-9]{8,16}$/;
+
+function normalizeVinToken(value) {
+  return String(value || '')
+    .toUpperCase()
     .replace(/O/g, '0').replace(/Q/g, '0').replace(/I/g, '1')
-    .replace(/\s+/g, '')
-    .trim();
-  if (clean.length < 8) return '';
-  if (clean.length < 17) {
-    const m = clean.match(/[A-HJ-NPR-Z0-9]{8,17}/);
-    return m ? m[0] : clean;
-  }
+    .replace(/[^A-HJ-NPR-Z0-9]/g, '');
+}
+
+function scoreVinCandidate(vin, sourceKind = '') {
+  if (!VIN_ALLOWED_RE.test(vin)) return -Infinity;
+  const info = getInfoCheckDigitModele(vin);
+  const wmiRef = getWmiReference(vin);
+  const computed = calcCheckDigit(vin);
+  const digitCount = (vin.match(/[0-9]/g) || []).length;
+  let score = 0;
+
+  if (wmiRef) score += 650;
+  else if (WMI_CHECK_DIGIT_REGIONS[vin[0]]) score += 250;
+  else score -= 450;
+
+  if (info.respecte === true) score += (computed === vin[8]) ? 1200 : 350;
+  else if (computed === vin[8]) score += 220;
+
+  if (sourceKind === 'line') score += 320;
+  else if (sourceKind === 'token') score += 260;
+  else if (sourceKind === 'edge-window') score -= 120;
+  else if (sourceKind === 'window') score -= 650;
+
+  if (digitCount >= 5) score += 150;
+  else if (digitCount >= 3) score += 60;
+  else if (digitCount === 0) score -= 1400;
+  else score -= 500;
+
+  return score;
+}
+
+function scorePartialVinCandidate(value, sourceKind = '') {
+  if (!VIN_PARTIAL_RE.test(value)) return -Infinity;
+  const wmiRef = getWmiReference(value);
+  const digitCount = (value.match(/[0-9]/g) || []).length;
+  let score = value.length * 25;
+  if (wmiRef) score += 650;
+  else if (WMI_CHECK_DIGIT_REGIONS[value[0]]) score += 220;
+  else score -= 250;
+  if (sourceKind === 'line') score += 220;
+  else if (sourceKind === 'token') score += 160;
+  if (digitCount >= 4) score += 120;
+  else if (digitCount === 0) score -= 700;
+  return score;
+}
+
+function collectOcrVinCandidates(text) {
   const candidates = [];
-  for (let start = 0; start <= clean.length - 17; start++) {
-    const cand = clean.substring(start, start + 17);
-    if (/^[A-HJ-NPR-Z0-9]{17}$/.test(cand)) candidates.push(cand);
-  }
-  if (!candidates.length) {
-    const m = clean.match(/[A-HJ-NPR-Z0-9]{8,17}/g);
-    return m ? m.sort((a, b) => b.length - a.length)[0] : clean.substring(0, 17);
-  }
-  let best = candidates[0], maxScore = -Infinity;
-  for (const cand of candidates) {
-    let score = 0;
-    const info = getInfoCheckDigitModele(cand);
-    const cd = calcCheckDigit(cand);
-    if (info.respecte === true) {
-      score += (cd === cand[8]) ? 1000 : -180;
-    } else if (cd === cand[8]) {
-      score += 150;
+  const partials = [];
+  const seenCandidates = new Set();
+  const seenPartials = new Set();
+
+  function addToken(raw, sourceKind) {
+    const token = normalizeVinToken(raw);
+    if (!token || token.length < 8) return;
+
+    if (token.length === 17 && VIN_ALLOWED_RE.test(token)) {
+      if (!seenCandidates.has(token)) {
+        seenCandidates.add(token);
+        candidates.push({ vin: token, sourceKind, score: scoreVinCandidate(token, sourceKind) });
+      }
+      return;
     }
-    if (/^[A-Z]{3}/.test(cand)) score += 50;
-    else if (/^[A-Z]{2}[0-9]/.test(cand)) score += 30;
-    if (getWmiReference(cand)) score += 120;
-    if (score > maxScore) { maxScore = score; best = cand; }
+
+    if (token.length > 17) {
+      for (let start = 0; start <= token.length - 17; start++) {
+        const vin = token.substring(start, start + 17);
+        if (!VIN_ALLOWED_RE.test(vin) || seenCandidates.has(vin)) continue;
+        seenCandidates.add(vin);
+        const edgeWindow = token.length <= 19 && (start === 0 || start === token.length - 17);
+        const windowKind = edgeWindow && getWmiReference(vin) ? 'edge-window' : 'window';
+        candidates.push({ vin, sourceKind: windowKind, score: scoreVinCandidate(vin, windowKind) });
+      }
+      return;
+    }
+
+    if (VIN_PARTIAL_RE.test(token) && !seenPartials.has(token)) {
+      seenPartials.add(token);
+      partials.push({ value: token, sourceKind, score: scorePartialVinCandidate(token, sourceKind) });
+    }
   }
-  return best;
+
+  const lines = String(text || '').split(/\r?\n/);
+  lines.forEach((line) => {
+    addToken(line, 'line');
+    String(line || '').split(/[^A-Za-z0-9]+/).forEach((part) => addToken(part, 'token'));
+  });
+
+  candidates.sort((a, b) => b.score - a.score || a.vin.localeCompare(b.vin));
+  partials.sort((a, b) => b.score - a.score || b.value.length - a.value.length);
+  return { candidates, partials };
+}
+
+function extraireVINDetail(text) {
+  const { candidates, partials } = collectOcrVinCandidates(text);
+  const best = candidates[0] || null;
+  const bestPartial = partials[0] || null;
+  let vin = '';
+
+  if (best && best.score >= 650) {
+    const partialLooksBetter = bestPartial
+      && bestPartial.score >= best.score + 250
+      && best.score < 1600;
+    if (!partialLooksBetter) vin = best.vin;
+  }
+
+  return {
+    vin,
+    score: best ? best.score : -Infinity,
+    partial: vin ? '' : (bestPartial ? bestPartial.value : ''),
+    partialScore: bestPartial ? bestPartial.score : -Infinity,
+    candidates,
+    partials
+  };
+}
+
+function extraireVIN(text) {
+  return extraireVINDetail(text).vin;
 }
 
 // Auto-correction : pour un VIN dont le WMI RESPECTE le check-digit, tente de

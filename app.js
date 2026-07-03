@@ -105,31 +105,58 @@ function onGalleryChange(e) {
 }
 
 // ── Prétraitement image pour OCR ─────────────────────────────────────
-function preprocess(dataUrl) {
+function preprocessVariants(dataUrl) {
   return new Promise((resolve) => {
     const img = new Image();
     img.onload = () => {
-      const maxW = 1400;
-      const scale = Math.min(1, maxW / img.width);
-      const canvas = document.createElement('canvas');
-      canvas.width = Math.round(img.width * scale);
-      canvas.height = Math.round(img.height * scale);
-      const ctx = canvas.getContext('2d');
-      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      const variants = [];
+      const configs = [
+        { name: 'photo', crop: null, maxW: 1800, mode: 'plain' },
+        { name: 'contraste', crop: null, maxW: 1800, mode: 'contrast' },
+        { name: 'bande VIN', crop: { x: 0.03, y: 0.22, w: 0.94, h: 0.46 }, maxW: 2200, mode: 'contrast' },
+        { name: 'bande VIN noir/blanc', crop: { x: 0.03, y: 0.22, w: 0.94, h: 0.46 }, maxW: 2200, mode: 'threshold' }
+      ];
+
+      for (const cfg of configs) {
+        const crop = cfg.crop || { x: 0, y: 0, w: 1, h: 1 };
+        const sx = Math.max(0, Math.round(img.width * crop.x));
+        const sy = Math.max(0, Math.round(img.height * crop.y));
+        const sw = Math.min(img.width - sx, Math.round(img.width * crop.w));
+        const sh = Math.min(img.height - sy, Math.round(img.height * crop.h));
+        const scale = Math.min(2.2, Math.max(1, cfg.maxW / sw));
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.max(1, Math.round(sw * scale));
+        canvas.height = Math.max(1, Math.round(sh * scale));
+        const ctx = canvas.getContext('2d');
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
+        ctx.drawImage(img, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
+
+        if (cfg.mode !== 'plain') enhanceOcrCanvas(ctx, canvas, cfg.mode);
+        variants.push({ name: cfg.name, dataUrl: canvas.toDataURL('image/png') });
+      }
+
+      resolve(variants);
+    };
+    img.onerror = () => resolve([{ name: 'photo', dataUrl }]);
+    img.src = dataUrl;
+  });
+}
+
+function enhanceOcrCanvas(ctx, canvas, mode) {
       const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
       const d = imgData.data;
-      // Niveaux de gris + renforcement du contraste
+      // Niveaux de gris + contraste adapté aux caractères frappés sur métal.
       for (let i = 0; i < d.length; i += 4) {
         let g = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
-        g = g < 110 ? g * 0.6 : Math.min(255, g * 1.25);
+        if (mode === 'threshold') {
+          g = g < 150 ? 0 : 255;
+        } else {
+          g = Math.max(0, Math.min(255, (g - 118) * 1.85 + 138));
+        }
         d[i] = d[i + 1] = d[i + 2] = g;
       }
       ctx.putImageData(imgData, 0, 0);
-      resolve(canvas.toDataURL('image/png'));
-    };
-    img.onerror = () => resolve(dataUrl);
-    img.src = dataUrl;
-  });
 }
 
 // ── OCR multi-moteur : OCR.Space (API gratuite) + repli Tesseract ─────
@@ -156,12 +183,12 @@ async function getWorker() {
 }
 
 // OCR.Space — moteur 2, meilleur pour l'alphanumérique gravé
-async function ocrSpace(dataUrl) {
+async function ocrSpaceText(dataUrl, engine = '2') {
   const form = new FormData();
   form.append('base64Image', dataUrl);
   form.append('apikey', ocrSpaceKey());
   form.append('language', 'eng');
-  form.append('OCREngine', '2');
+  form.append('OCREngine', engine);
   form.append('scale', 'true');
   form.append('detectOrientation', 'true');
   const ctrl = new AbortController();
@@ -169,58 +196,140 @@ async function ocrSpace(dataUrl) {
   try {
     const res = await fetch(OCR_SPACE_URL, { method: 'POST', body: form, signal: ctrl.signal });
     const json = await res.json();
+    if (json.error) throw new Error(json.error);
     if (json.IsErroredOnProcessing || !json.ParsedResults || !json.ParsedResults[0]) return '';
-    return extraireVIN(json.ParsedResults[0].ParsedText || '');
+    return json.ParsedResults[0].ParsedText || '';
   } finally {
     clearTimeout(to);
   }
 }
 
 // Tesseract.js — 100 % côté appareil (repli hors-ligne)
-async function ocrTesseract(dataUrl) {
+async function ocrTesseractText(dataUrl, pageSegMode = '7') {
   const worker = await getWorker();
+  await worker.setParameters({ tessedit_pageseg_mode: pageSegMode });
   const { data } = await worker.recognize(dataUrl);
-  return extraireVIN(data.text || '');
+  return data.text || '';
+}
+
+function chooseOcrVin(reads) {
+  const details = reads.map((read) => {
+    const detail = extraireVINDetail(read.text || '');
+    return Object.assign({}, read, { detail });
+  });
+  const exacts = [];
+  const partials = [];
+
+  details.forEach((read) => {
+    if (read.detail.vin) {
+      exacts.push({
+        vin: read.detail.vin,
+        score: read.detail.score,
+        source: read.source,
+        variant: read.variant
+      });
+    }
+    if (read.detail.partial) {
+      partials.push({
+        value: read.detail.partial,
+        score: read.detail.partialScore,
+        source: read.source,
+        variant: read.variant
+      });
+    }
+  });
+
+  exacts.sort((a, b) => b.score - a.score);
+  partials.sort((a, b) => b.score - a.score || b.value.length - a.value.length);
+
+  const best = exacts[0] || null;
+  const partial = partials[0] || null;
+  const partialContradictsWeakExact = best && partial
+    && partial.score >= best.score - 100
+    && best.score < 1600;
+
+  if (best && !partialContradictsWeakExact) {
+    return {
+      vin: best.vin,
+      moteur: best.source + (best.variant ? ' ' + best.variant : ''),
+      score: best.score,
+      partial: ''
+    };
+  }
+
+  return {
+    vin: '',
+    moteur: partial ? partial.source + (partial.variant ? ' ' + partial.variant : '') : '',
+    score: best ? best.score : -Infinity,
+    partial: partial ? partial.value : ''
+  };
+}
+
+function isStrongOcrChoice(choice) {
+  if (!choice || !choice.vin) return false;
+  const info = getInfoCheckDigitModele(choice.vin);
+  return choice.score >= 1800 || (info.respecte === true && calcCheckDigit(choice.vin) === choice.vin[8]);
 }
 
 async function processImage(dataUrl) {
-  showLoader('Lecture OCR du VIN…');
+  showLoader('Lecture OCR multi-passes du VIN…');
   try {
-    const pre = await preprocess(dataUrl);
-    let vin = '';
-    let moteur = '';
+    const variants = await preprocessVariants(dataUrl);
+    const reads = [];
+    let choice = null;
 
     // 1) OCR.Space (API gratuite) si connexion disponible
     if (navigator.onLine) {
-      try {
-        const v = await ocrSpace(pre);
-        if (v) { vin = v; moteur = 'OCR.Space'; }
-      } catch (e) { console.warn('[OCR.Space]', e.message); }
+      const hasPersonalKey = ocrSpaceKey().toLowerCase() !== 'helloworld';
+      const apiVariants = variants.slice(0, hasPersonalKey ? variants.length : 2);
+      const apiEngines = hasPersonalKey ? ['2', '1'] : ['2'];
+      for (const variant of apiVariants) {
+        for (const engine of apiEngines) {
+          try {
+            const text = await ocrSpaceText(variant.dataUrl, engine);
+            if (text) reads.push({ source: 'OCR.Space E' + engine, variant: variant.name, text });
+            choice = chooseOcrVin(reads);
+            if (isStrongOcrChoice(choice)) break;
+          } catch (e) { console.warn('[OCR.Space]', variant.name, 'E' + engine, e.message); }
+        }
+        if (isStrongOcrChoice(choice)) break;
+      }
     }
 
     // 2) Repli Tesseract (local) si OCR.Space échoue ou VIN incomplet (< 17)
-    if (!vin || vin.length < 17) {
-      try {
-        const v = await ocrTesseract(pre);
-        if (v && v.length >= vin.length) { vin = v; moteur = moteur ? moteur + '+Tesseract' : 'Tesseract'; }
-      } catch (e) { console.warn('[Tesseract]', e.message); }
+    choice = chooseOcrVin(reads);
+    if (!isStrongOcrChoice(choice)) {
+      const tessVariants = variants.slice(1, 4);
+      for (const variant of tessVariants) {
+        try {
+          const mode = variant.name.includes('bande') ? '7' : '6';
+          const text = await ocrTesseractText(variant.dataUrl, mode);
+          if (text) reads.push({ source: 'Tesseract', variant: variant.name, text });
+          choice = chooseOcrVin(reads);
+          if (isStrongOcrChoice(choice)) break;
+        } catch (e) { console.warn('[Tesseract]', variant.name, e.message); }
+      }
     }
 
-    // 3) Auto-correction par check-digit (pour les WMI qui le respectent)
-    let corrige = false;
-    if (vin.length === 17) {
-      const fixed = corrigerVINparCheckDigit(vin);
-      if (fixed !== vin) { vin = fixed; corrige = true; }
-    }
+    // 3) Choix final : jamais de VIN inventé, seulement 17 caractères lus.
+    choice = chooseOcrVin(reads);
+    const vin = choice && choice.vin ? choice.vin : '';
+    const moteur = choice && choice.moteur ? choice.moteur : 'OCR';
 
     hideLoader();
-    if (vin && vin.length >= 8) {
+    if (vin && vin.length === 17) {
       $('vinField').value = vin;
       let msg = '✓ VIN détecté (' + (moteur || 'OCR') + ')';
-      if (corrige) msg += ' — auto-corrigé ✔';
       setFeedback('<span class="msg-ok">' + msg + ' — vérifiez puis enregistrez.</span>');
-      if (vin.length === 17) analyzeVin();
+      analyzeVin();
+    } else if (choice && choice.partial) {
+      $('vinField').value = choice.partial;
+      $('resultBlock').style.display = 'none';
+      $('btnSend').disabled = true;
+      setFeedback('<span class="msg-missing">VIN incomplet détecté (' + choice.partial.length + '/17) : ' + escapeHtml(choice.partial) + '. Reprenez une photo plus proche ou saisissez le caractère manquant.</span>');
     } else {
+      $('resultBlock').style.display = 'none';
+      $('btnSend').disabled = true;
       setFeedback('<span class="msg-missing">⚠ VIN non lisible. Rapprochez-vous / améliorez l’éclairage, ou saisissez-le manuellement.</span>');
     }
   } catch (e) {
