@@ -53,9 +53,9 @@ const WMI_CHECK_DIGIT_REGIONS = {
 
 // Surcharges manuelles : AUCUNE. La liste de référence (wmi-reference.js,
 // colonne oui/non générée depuis NHTSA vPIC) fait autorité pour déterminer
-// quels WMI appliquent le check-digit. Exemples : BMW/MINI vérifiés
-// (WBA, WBS, WBY, WMW, 3MW, 4US, 5UX…) = oui ; autres WMI européens non
-// vérifiés = non (optionnel ISO 3779).
+// quels WMI appliquent le check-digit. Exemples : BMW/MINI/Volvo vérifiés
+// (WBA, WBS, WBY, WBX, WMW, YV1-YV4, 3MW, 4US, 5UX...) = oui ; autres WMI
+// européens non vérifiés = non (optionnel ISO 3779).
 const WMI_CHECK_DIGIT_OVERRIDE = {};
 
 // ── Base WMI (chargée depuis wmi-reference.js : [WMI, Marque, "oui"/"non"]) ──
